@@ -10,7 +10,7 @@ import cv2
 IMAGENET_MEAN = tf.constant([123.68, 116.779, 103.939], dtype=tf.float32)
 
 class ImageDataGenerator(object):
-    def __init__(self, file_path='/Users/zpy/Desktop/xray_images/', train_data_dic='train_images_64x64/',
+    def __init__(self, file_path='/home/nfs/zpy/xrays/HighResImg_Gen/xray_images/', train_data_dic='train_images_64x64/',
                  train_label_dic='train_images_128x128/',batch_size =32,
                  shuffle=True, img_size=[64, 64],label_size=[128, 128], buffer_size=1000):
         '''
@@ -38,7 +38,7 @@ class ImageDataGenerator(object):
         self._load_data()
 
         # number of samples in the dataset
-        self.data_size = len(self.labels)
+        self.data_size = len(self.label_paths)
 
         self.img_size = img_size  # (64, 64)
         self.label_size = label_size  # (128, 128)
@@ -48,10 +48,10 @@ class ImageDataGenerator(object):
 
         # convert lists to TF tensor (build in the system)
         self.img_paths = convert_to_tensor(self.img_paths, dtype=dtypes.string)
-        self.labels_paths = convert_to_tensor(self.labels, dtype=dtypes.string) # it is a path, too.
+        self.label_paths = convert_to_tensor(self.label_paths, dtype=dtypes.string) # it is a path, too.
 
         # create dataset
-        data = tf.data.Dataset.from_tensor_slices((self.img_paths, self.labels))
+        data = tf.data.Dataset.from_tensor_slices((self.img_paths, self.label_paths))
 
         # distinguish between train/infer. when calling the parsing functions
         #if mode == 'train':
@@ -69,31 +69,32 @@ class ImageDataGenerator(object):
     def _load_data(self):
         """Read the content of the text file and store it into lists."""
         self.img_paths = []
-        self.labels = []
+        self.label_paths = []
 
         path = self.file_path+self.train_data_dic
+        print('path',path)
         for i in os.listdir(path):
             self.img_paths.append(self.file_path + self.train_data_dic + i)
-            self.labels.append(self.file_path + self.train_label_dic + i)
+            self.label_paths.append(self.file_path + self.train_label_dic + i)
 
 
     def _shuffle_lists(self):
         """Conjoined shuffling of the list of paths and labels."""
         path = self.img_paths
-        labels = self.labels_paths
+        labels = self.label_paths
         permutation = np.random.permutation(self.data_size)
         self.img_paths = []
-        self.labels_paths = []
+        self.label_paths = []
         for i in permutation:
             self.img_paths.append(path[i])
-            self.labels.append(labels[i])
+            self.label_paths.append(labels[i])
 
     def _parse_function_train(self, image_path, label_path):
         """Input parser for samples of the training set."""
 
         # load and preprocess the image
         img_string = tf.read_file(image_path)
-        print(filename)
+        print(image_path)
         img_decoded = tf.image.decode_jpeg(img_string, channels=0)
         #img_resized = tf.image.resize_images(img_decoded, [self.img_size[0], self.img_size[1]], method=0) # 0:bilinear
 

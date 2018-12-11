@@ -16,18 +16,24 @@ import tensorflow as tf
 from six.moves import xrange
 import math
 
-locale.setlocale(locale.LC_ALL, '')
 flags = tf.app.flags
 flags.DEFINE_string("train", "True", "train")
-flags.DEFINE_string("train_file", '/Users/zpy/Desktop/xray_images/', "data path")
+flags.DEFINE_string("train_file", '/home/nfs/zpy/xrays/HighResImg_Gen/xray_images/', "data path")
 flags.DEFINE_integer("BATCH_SIZE", "128", "BATCH_SIZE")
 flags.DEFINE_integer("DATA_HEIGHT", "64", "DATA_HEIGHT")
 flags.DEFINE_integer("DATA_WIDTH", "64", "DATA_WIDTH")
 flags.DEFINE_integer("LABEL_HEIGHT", "128", "LABEL_HEIGHT")
-flags.DEFINE_integer("LABEL_WEIGHT", "128", "LABEL_WEIGHT")
+flags.DEFINE_integer("LABEL_WIDTH", "128", "LABEL_WIDTH")
+flags.DEFINE_string("gpu","1","gpu")
 flags.DEFINE_string("train_data_dic","train_images_64x64/","train_data_dic")
 flags.DEFINE_string("train_label_dic", "train_images_128x128/", "train_label_dic")
+flags.DEFINE_string("checkpoint_dir", "./checkpoints/", "checkpoint_dir")
+flags.DEFINE_string("generation_dir", "./generations/", "generations_dir")
+flags.DEFINE_string("inference_dir", "./inferences/", "inference_dir")
 FLAGS = flags.FLAGS
+
+
+os.environ["CUDA_VISIBLE_DEVICES"] = FLAGS.gpu
 
 class Model(object):
     def __init__(self, sess, ITERS=30000, num_epochs=10,
@@ -54,6 +60,7 @@ class Model(object):
             trainable=False,
             collections=[tf.GraphKeys.GLOBAL_STEP, tf.GraphKeys.GLOBAL_VARIABLES])
 
+        '''
         update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
         with tf.control_dependencies(update_ops):
             # self.train_op=tf.train.GradientDescentOptimizer(learning_rate=learning_rate).
@@ -64,6 +71,7 @@ class Model(object):
                 beta2=0.99
             ).minimize(self.cost, global_step=self.global_step)  # tf.train.GradientDescentOptimizer
         self.saver = tf.train.Saver()
+        '''
 
     def LeakyReLU(self, x, alpha=0.2):
         return tf.maximum(alpha * x, x)
@@ -160,9 +168,9 @@ class Model(object):
 
     def train(self):
         tf.global_variables_initializer().run()
-
+        could_load=0
         # load ckpt
-        could_load, checkpoint_counter = self.load(self.checkpoint_dir)
+        #could_load, checkpoint_counter = self.load(self.checkpoint_dir)
         if could_load:
             counter = checkpoint_counter
             print(" [*] Load SUCCESS")
@@ -171,17 +179,17 @@ class Model(object):
 
         tr_data = ImageDataGenerator(FLAGS.train_file,
                                      img_size=[self.DATA_HEIGHT, self.DATA_WIDTH],
-                                     label_size=[self.LABEL_HEIGHT, self.LABEL_WEIGHT],
+                                     label_size=[self.LABEL_HEIGHT, self.LABEL_WIDTH],
                                      batch_size=self.BATCH_SIZE,
                                      shuffle=True)
 
-        print('[Ves9] Data done ...')
+        print('[Model] Data done ...')
         # create an reinitializable iterator given the dataset structure
         iterator = Iterator.from_structure(tr_data.data.output_types,
                                            tr_data.data.output_shapes)
         next_batch = iterator.get_next()
         batch_idxs = int(np.floor(tr_data.data_size / self.BATCH_SIZE))
-        print(tr_data.data_size)
+        print(tr_data.data_size) 
 
         for epoch in range(self.num_epochs):  #
             print('[Ves9] Begin epoch ', epoch, '...')
@@ -189,24 +197,27 @@ class Model(object):
 
                 start_time = time.time()
                 batch_images, batch_gts = self.sess.run(next_batch)
-
+                print(batch_images[0].shape, batch_images[0])
+                print(batch_gts[0].shape, batch_gts[0])
+                '''
                 _cost, result, acc_, _ = self.sess.run(
                     [self.cost, self.output, self.accuracy, self.train_op],
                     feed_dict={self.images: batch_images,
                                self.ground_truth: batch_gts})
+                '''
                 tm = time.time() - start_time
-
+                '''
                 if np.mod(iteration, 5000) == 0 and iteration != 0:
                     print('[INFO] Save checkpoint...')
                     self.save(self.checkpoint_dir, iteration)
                 if (iteration % 50 == 0):
                     print(iteration, ': ', '%.2f' % (tm), _cost)
-
+                '''
             print('[INFO] Save the epoch checkpoint ... ')
-            self.save(self.checkpoint_dir)
+            #self.save(self.checkpoint_dir)
         # Last saving
-        print('[INFO] Save the last checkpoint...')
-        self.save(self.checkpoint_dir)
+        # print('[INFO] Save the last checkpoint...')
+        # self.save(self.checkpoint_dir)
 
     @property
     def model_dir(self):
@@ -253,8 +264,8 @@ def main(_):
 
     with tf.Session(config=run_config) as sess:
         model = Model(sess=sess,
-                      checkpoint_dir=checkpoint_dir,
-                      cost_dir=cost_dir)
+                      checkpoint_dir=None,
+                      cost_dir=None)
 
         if(FLAGS.train =='True'):
             model.train()
