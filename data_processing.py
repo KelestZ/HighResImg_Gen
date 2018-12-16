@@ -1,18 +1,59 @@
 import os
 import tensorflow as tf
 import numpy as np
-
+import collections
 from tensorflow.contrib.data import Dataset
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework.ops import convert_to_tensor
-import cv2
+from lib.ops import random_flip
 
 IMAGENET_MEAN = tf.constant([123.68, 116.779, 103.939], dtype=tf.float32)
+# Define the dataloader
+def data_loader(FLAGS):
+    with tf.device('/cpu:0'):
+        # Define the returned data batches
+        Data = collections.namedtuple('Data', ' inputs, targets, image_count, steps_per_epoch')
+        tr_data = ImageDataGenerator(FLAGS.train_file,
+                                     img_size=[FLAGS.DATA_HEIGHT, FLAGS.DATA_WIDTH],
+                                     label_size=[FLAGS.LABEL_HEIGHT, FLAGS.LABEL_WIDTH],
+                                     batch_size=FLAGS.batch_size,
+                                     shuffle=True,
+                                     FLAGS=FLAGS)
+
+        #steps_per_epoch = int(np.floor(tr_data.data_size / FLAGS.batch_size))
+        steps_per_epoch = tr_data.data_size // FLAGS.batch_size
+        input_images = tr_data.input_images
+        target_images = tr_data.target_images
+
+        if FLAGS.task == 'SRGAN' or FLAGS.task == 'SRResnet':
+            input_images.set_shape([FLAGS.DATA_HEIGHT, FLAGS.DATA_WIDTH, 1])
+            target_images.set_shape([FLAGS.LABEL_HEIGHT, FLAGS.LABEL_WIDTH, 1])
+
+        if FLAGS.mode == 'train':
+            inputs_batch, targets_batch = tf.train.shuffle_batch([input_images, target_images],
+                batch_size=FLAGS.batch_size, capacity=FLAGS.image_queue_capacity + 4 * FLAGS.batch_size,
+                min_after_dequeue=FLAGS.image_queue_capacity, num_threads=FLAGS.queue_thread)
+        else:
+            inputs_batch, targets_batch = tf.train.batch([input_images, target_images],
+                batch_size=FLAGS.batch_size, num_threads=FLAGS.queue_thread, allow_smaller_final_batch=True)
+
+
+        if FLAGS.task == 'SRGAN' or FLAGS.task == 'SRResnet':
+            inputs_batch.set_shape([FLAGS.batch_size, FLAGS.DATA_HEIGHT, FLAGS.DATA_WIDTH, 1])
+            targets_batch.set_shape([FLAGS.batch_size, FLAGS.LABEL_HEIGHT, FLAGS.LABEL_WIDTH, 1])
+
+
+    return Data(
+        inputs=inputs_batch,
+        targets=targets_batch,
+        image_count=tr_data.data_size,
+        steps_per_epoch=steps_per_epoch)
+
 
 class ImageDataGenerator(object):
     def __init__(self, file_path='/home/nfs/zpy/xrays/HighResImg_Gen/xray_images/', train_data_dic='train_images_64x64/',
                  train_label_dic='train_images_128x128/',batch_size =32,
-                 shuffle=True, img_size=[64, 64],label_size=[128, 128], buffer_size=1000):
+                 shuffle=True, img_size=[64, 64],label_size=[128, 128], buffer_size=1000,FLAGS=None):
         '''
 
             Args:
@@ -50,6 +91,47 @@ class ImageDataGenerator(object):
         self.img_paths = convert_to_tensor(self.img_paths, dtype=dtypes.string)
         self.label_paths = convert_to_tensor(self.label_paths, dtype=dtypes.string) # it is a path, too.
 
+        output = tf.train.slice_input_producer([self.img_paths, self.label_paths],
+                                               shuffle=False, capacity=FLAGS.name_queue_capacity)
+
+        # Reading and decode the images
+        reader = tf.WholeFileReader(name='image_reader')
+        image_LR = tf.read_file(output[0])
+        image_HR = tf.read_file(output[1])
+        input_image_LR = tf.image.decode_png(image_LR, 1)#, channels=0)
+        input_image_HR = tf.image.decode_png(image_HR, 1)#, channels=0)
+
+        input_image_LR = tf.image.convert_image_dtype(input_image_LR, dtype=tf.float32)
+        input_image_HR = tf.image.convert_image_dtype(input_image_HR, dtype=tf.float32)
+
+        input_image_LR = tf.identity(input_image_LR)
+        input_image_HR = tf.identity(input_image_HR)
+
+        # Normalize the low resolution image to [0, 1], high resolution to [-1, 1]
+        # a_image = preprocessLR(input_image_LR)
+        # b_image = preprocess(input_image_HR)
+
+        inputs, targets = [input_image_LR, input_image_HR]#[a_image, b_image]
+
+        with tf.name_scope('data_preprocessing'):
+            with tf.variable_scope('random_flip'):
+                # Check for random flip:
+                if (FLAGS.flip is True) and (FLAGS.mode == 'train'):
+                    print('[Config] Use random flip')
+                    # Produce the decision of random flip
+                    decision = tf.random_uniform([], 0, 1, dtype=tf.float32)
+
+                    input_images = random_flip(inputs, decision)
+                    target_images = random_flip(targets, decision)
+                else:
+                    input_images = tf.identity(inputs)
+                    target_images = tf.identity(targets)
+
+        self.input_images = input_images
+        self.target_images = target_images
+
+        '''
+        #----------------------------------------------------------
         # create dataset
         data = tf.data.Dataset.from_tensor_slices((self.img_paths, self.label_paths))
 
@@ -62,10 +144,11 @@ class ImageDataGenerator(object):
         if shuffle:
             data = data.shuffle(buffer_size=buffer_size)
 
-        # create a new dataset with batches of images
-        data = data.batch(batch_size)
-        self.data = data
 
+        # create a new dataset with batches of images
+        #data = data.batch(batch_size)
+        self.data = data
+        '''
     def _load_data(self):
         """Read the content of the text file and store it into lists."""
         self.img_paths = []
@@ -94,19 +177,25 @@ class ImageDataGenerator(object):
 
         # load and preprocess the image
         img_string = tf.read_file(image_path)
-        print(image_path)
-        img_decoded = tf.image.decode_jpeg(img_string, channels=0)
-        #img_resized = tf.image.resize_images(img_decoded, [self.img_size[0], self.img_size[1]], method=0) # 0:bilinear
-
-        #img_centered = tf.subtract(img_resized, IMAGENET_MEAN)
-        # RGB -> BGR
-        #img_bgr = img_centered[:, :, ::-1]
-
-
+        inputs = tf.image.decode_jpeg(img_string, channels=0)
         # convert label to ground truth png
         img_string2 = tf.read_file(label_path)
-        img_decoded2 = tf.image.decode_png(img_string2)
-        #img_gt = tf.image.resize_images(img_decoded2, [self.label_size[0], self.label_size[1]], method=1) # 1:Nearest
+        targets = tf.image.decode_png(img_string2)
+
+        # The data augmentation part
+        with tf.name_scope('data_preprocessing'):
+            with tf.variable_scope('random_flip'):
+                # Check for random flip:
+                if (FLAGS.flip is True) and (FLAGS.mode == 'train'):
+                    print('[Config] Use random flip')
+                    # Produce the decision of random flip
+                    decision = tf.random_uniform([], 0, 1, dtype=tf.float32)
+
+                    input_images = random_flip(inputs, decision)
+                    target_images = random_flip(targets, decision)
+                else:
+                    input_images = tf.identity(inputs)
+                    target_images = tf.identity(targets)
 
         return img_decoded, img_decoded2 #img_bgr, img_gt
 

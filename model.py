@@ -1,39 +1,78 @@
 # -*- coding: utf-8 -*-
 import os, sys
-
-sys.path.append(os.getcwd())
-
+import numpy as np
+import tensorflow as tf
+import tensorflow.contrib.slim as slim
+from tensorflow.contrib.data import Iterator
+from lib.tool import generator, SRGAN
+from lib.ops import *
+import math
 import time
+sys.path.append(os.getcwd())
 from glob import glob
 from data_processing import *
 import matplotlib
 import cv2
-from tensorflow.contrib.data import Iterator
 matplotlib.use('Agg')
-import numpy as np
-import sklearn.datasets
-import tensorflow as tf
-from six.moves import xrange
-import math
+
 
 flags = tf.app.flags
-flags.DEFINE_string("train", "True", "train")
-flags.DEFINE_string("train_file", '/home/nfs/zpy/xrays/HighResImg_Gen/xray_images/', "data path")
-flags.DEFINE_integer("BATCH_SIZE", "128", "BATCH_SIZE")
+flags.DEFINE_string("train", "True", "train")##duoyu
+
 flags.DEFINE_integer("DATA_HEIGHT", "64", "DATA_HEIGHT")
 flags.DEFINE_integer("DATA_WIDTH", "64", "DATA_WIDTH")
 flags.DEFINE_integer("LABEL_HEIGHT", "128", "LABEL_HEIGHT")
 flags.DEFINE_integer("LABEL_WIDTH", "128", "LABEL_WIDTH")
-flags.DEFINE_string("gpu","1","gpu")
+flags.DEFINE_string("gpu","2","gpu")
 flags.DEFINE_string("train_data_dic","train_images_64x64/","train_data_dic")
 flags.DEFINE_string("train_label_dic", "train_images_128x128/", "train_label_dic")
+
+flags.DEFINE_string("inference_dir", "./inferences/", "inference_dir")
+
+
+# The system parameter
 flags.DEFINE_string("checkpoint_dir", "./checkpoints/", "checkpoint_dir")
 flags.DEFINE_string("generation_dir", "./generations/", "generations_dir")
-flags.DEFINE_string("inference_dir", "./inferences/", "inference_dir")
+flags.DEFINE_string('summary_dir', None, 'The dirctory to output the summary')
+flags.DEFINE_string('mode', 'train', 'The mode of the model train, test.')
+flags.DEFINE_boolean('pre_trained_model', False, 'pretrain')
+flags.DEFINE_string('pre_trained_model_type', 'SRGAN', 'The type of pretrained model (SRGAN or SRResnet)')
+flags.DEFINE_boolean('is_training', True, 'Training => True, Testing => False')
+flags.DEFINE_string('vgg_ckpt', './vgg19/vgg_19.ckpt', 'path to checkpoint file for the vgg19')
+flags.DEFINE_string('task', 'SRGAN', 'The task: SRGAN, SRResnet')
+
+# The data preparing operation
+flags.DEFINE_integer("batch_size", "32", "BATCH_SIZE")
+flags.DEFINE_boolean('flip', True, 'Whether random flip data augmentation is applied')
+flags.DEFINE_string("train_file", '/home/nfs/zpy/xray_images/', "data path")
+
+flags.DEFINE_integer('name_queue_capacity', 2048, 'The capacity of the filename queue (suggest large to ensure enough random shuffle.')
+flags.DEFINE_integer('image_queue_capacity', 2048, 'The capacity of the image queue (suggest large to ensure enough random shuffle')
+flags.DEFINE_integer('queue_thread', 10, 'The threads of the queue (More threads can speedup the training process.')
+
+# Generator configuration
+flags.DEFINE_integer('num_resblock', 8, 'How many residual blocks are there in the generator')
+# The content loss parameter
+flags.DEFINE_string('perceptual_mode', 'MSE', 'The type of feature used in perceptual loss')
+flags.DEFINE_float('EPS', 1e-12, 'The eps added to prevent nan')
+flags.DEFINE_float('ratio', 0.001, 'The ratio between content loss and adversarial loss')
+flags.DEFINE_float('vgg_scaling', 0.0061, 'The scaling factor for the perceptual loss if using vgg perceptual loss')
+# The training parameters
+flags.DEFINE_float('learning_rate', 0.0001, 'The learning rate for the network')
+flags.DEFINE_integer('decay_step', 500000, 'The steps needed to decay the learning rate')
+flags.DEFINE_float('decay_rate', 0.1, 'The decay rate of each decay step')
+flags.DEFINE_boolean('stair', False, 'Whether perform staircase decay. True => decay in discrete interval.')
+flags.DEFINE_float('beta', 0.9, 'The beta1 parameter for the Adam optimizer')
+flags.DEFINE_integer('max_epoch', None, 'The max epoch for the training')
+flags.DEFINE_integer('max_iter', 1000000, 'The max iteration of the training')
+flags.DEFINE_integer('display_freq', 20, 'The diplay frequency of the training process')
+flags.DEFINE_integer('summary_freq', 100, 'The frequency of writing summary')
+flags.DEFINE_integer('save_freq', 10000, 'The frequency of saving images')
+
 FLAGS = flags.FLAGS
-
-
 os.environ["CUDA_VISIBLE_DEVICES"] = FLAGS.gpu
+print_configuration_op(FLAGS)
+
 
 class Model(object):
     def __init__(self, sess, ITERS=30000, num_epochs=10,
@@ -52,6 +91,7 @@ class Model(object):
         self.LABEL_WIDTH = FLAGS.LABEL_WIDTH
 
         self.build()
+
 
     def build(self):
         self.global_step = tf.Variable(
@@ -73,98 +113,7 @@ class Model(object):
         self.saver = tf.train.Saver()
         '''
 
-    def LeakyReLU(self, x, alpha=0.2):
-        return tf.maximum(alpha * x, x)
 
-    def ReLU(self, output):
-        return tf.nn.relu(output)
-
-    def BN(self, name, axis, inputs, is_training=True):
-        return (tf.layers.batch_normalization(inputs, axis=axis, momentum=0.1, epsilon=1e-5,
-                                              training=is_training, name=name))
-
-    def Conv2D(self, name, input_dim, output_dim, filter_size, inputs, stride=2,
-               he_init=True, gain=1.):
-
-        with tf.name_scope(name) as scope:
-            def uniform(stdev, size):
-                return np.random.uniform(
-                    low=-stdev * np.sqrt(3),
-                    high=stdev * np.sqrt(3),
-                    size=size
-                ).astype('float32')
-
-            fan_in = input_dim * filter_size[0] * filter_size[1]  # filter_size**2
-            fan_out = output_dim * filter_size[0] * filter_size[1] / (stride ** 2)  # filter_size**2
-
-            if he_init:
-                filters_stdev = np.sqrt(4. / (fan_in + fan_out))
-            else:  # Normalized init (Glorot & Bengio)
-                filters_stdev = np.sqrt(2. / (fan_in + fan_out))
-
-            filter_values = uniform(
-                filters_stdev,
-                (filter_size[0], filter_size[1], input_dim, output_dim))
-
-            filter_values *= gain
-            filters = param(name + '.Filters', filter_values)
-
-            result = tf.nn.conv2d(
-                input=inputs,
-                filter=filters,
-                strides=[1, stride, stride, 1],
-                padding='SAME',
-                data_format='NHWC'
-            )
-
-            return result
-
-    def ConvLayer(self, name, input, n_out, filter_size=[3, 3], stride=2):
-        # name, input_dim, output_dim, filter_size, inputs
-        output = self.Conv2D(name + '_1', input.get_shape().as_list()[-1], n_out, filter_size, input, stride)
-        print(name, output)
-        output = self.BN(name + "_BN", 0, output)
-        output = self.ReLU(output)
-        return output
-
-    def bilinear_upsample_weights(self, input_dim, output_dim):
-        """
-        Create weights matrix for transposed convolution with bilinear filter nitialization.
-        """
-        # 4 times
-        factor = 4
-        filter_size = 2 * factor - factor % 2
-
-        weights = np.zeros((filter_size,
-                            filter_size,
-                            output_dim,
-                            input_dim), dtype=np.float32)
-
-        upsample_kernel = self.upsample_filt(filter_size)
-        for i in range(output_dim):
-            for k in range(input_dim):
-                weights[:, :, i, k] = upsample_kernel
-
-        return weights
-
-    def Deconv2D(self, name, input_dim, output_shape, filter_size, inputs, stride):
-        with tf.name_scope(name) as scope:
-            output_dim = output_shape[-1]
-            # number_of_classes=5
-            filter_values = self.bilinear_upsample_weights(input_dim, output_dim)
-            print(name, filter_values.shape)
-
-            filters = param(
-                name + '.Filters',
-                filter_values)
-
-            result = tf.nn.conv2d_transpose(
-                value=inputs,
-                filter=filters,
-                output_shape=output_shape,
-                strides=[1, stride, stride, 1],
-                padding='SAME')
-        return result
 
     def train(self):
         tf.global_variables_initializer().run()
@@ -189,7 +138,7 @@ class Model(object):
                                            tr_data.data.output_shapes)
         next_batch = iterator.get_next()
         batch_idxs = int(np.floor(tr_data.data_size / self.BATCH_SIZE))
-        print(tr_data.data_size) 
+        print(tr_data.data_size)
 
         for epoch in range(self.num_epochs):  #
             print('[Ves9] Begin epoch ', epoch, '...')
@@ -259,23 +208,124 @@ class Model(object):
 
 
 def main(_):
-    run_config = tf.ConfigProto()
-    run_config.gpu_options.allow_growth = False
 
-    with tf.Session(config=run_config) as sess:
-        model = Model(sess=sess,
-                      checkpoint_dir=None,
-                      cost_dir=None)
+    if (FLAGS.mode == 'train'):
+        data = data_loader(FLAGS)
+        print('Data count = %d' % (data.image_count))
 
-        if(FLAGS.train =='True'):
-            model.train()
+        # Connect to the network
+        if FLAGS.task == 'SRGAN':
+            Net = SRGAN(data.inputs, data.targets, FLAGS)
+        else:
+            raise NotImplementedError('Unknown task type')
 
-        elif(FLAGS.train =='False'): # test
-            print('Test.....')
-            #ves.test_pipeline()
-            #ves.test()
+        print('Finish building the network!!!')
+
+        # Define the saver and weight initiallizer
+        saver = tf.train.Saver(max_to_keep=10)
+        # The variable list
+        var_list = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)
+
+        if FLAGS.task == 'SRGAN':
+            tf.summary.scalar('discriminator_loss', Net.discrim_loss)
+            tf.summary.scalar('adversarial_loss', Net.adversarial_loss)
+            tf.summary.scalar('content_loss', Net.content_loss)
+            tf.summary.scalar('generator_loss', Net.content_loss + FLAGS.ratio * Net.adversarial_loss)
+            # tf.summary.scalar('PSNR', psnr)
+            tf.summary.scalar('learning_rate', Net.learning_rate)
+
+            if FLAGS.pre_trained_model_type == 'SRGAN':
+                var_list2 = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='generator') + \
+                            tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='discriminator')
 
 
+
+        if not FLAGS.perceptual_mode == 'MSE':
+            vgg_var_list = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='vgg_19')
+            vgg_restore = tf.train.Saver(vgg_var_list)
+
+        run_config = tf.ConfigProto()
+        run_config.gpu_options.allow_growth = False
+        # Use superviser to coordinate all queue and summary writer
+        sv = tf.train.Supervisor(logdir=FLAGS.summary_dir, save_summaries_secs=0, saver=None)
+        with sv.managed_session(config=run_config) as sess:
+            '''
+            model = Model(sess=sess,
+                          checkpoint_dir=None,
+                          cost_dir=None)
+
+            # if(FLAGS.train =='True'):
+            # model.train()
+            '''
+
+            if FLAGS.max_epoch is None:
+                if FLAGS.max_iter is None:
+                    raise ValueError('one of max_epoch or max_iter should be provided')
+                else:
+                    max_iter = FLAGS.max_iter
+            else:
+                max_iter = FLAGS.max_epoch * data.steps_per_epoch
+
+            # create an reinitializable iterator given the dataset structure
+            # iterator = Iterator.from_structure(tr_data.data.output_types,
+            #                                    tr_data.data.output_shapes)
+            # next_batch = iterator.get_next()
+            # batch_idxs = int(np.floor(tr_data.data_size / FLAGS.batch_size))
+            # max_iter = FLAGS.max_epoch * batch_idxs
+            # print(tr_data.data_size)
+            print('Optimization starts!!!')
+            start = time.time()
+            for step in range(max_iter):
+                fetches = {
+                    "train": Net.train,
+                    "global_step": sv.global_step,
+                }
+
+                # batch_images, batch_gts = self.sess.run(next_batch)
+                # print(batch_images[0].shape, batch_images[0])
+                # print(batch_gts[0].shape, batch_gts[0])
+
+                if ((step + 1) % FLAGS.display_freq) == 0:
+                    if FLAGS.task == 'SRGAN':
+                        fetches["discrim_loss"] = Net.discrim_loss
+                        fetches["adversarial_loss"] = Net.adversarial_loss
+                        fetches["content_loss"] = Net.content_loss
+                        #fetches["PSNR"] = psnr
+                        fetches["learning_rate"] = Net.learning_rate
+                        fetches["global_step"] = Net.global_step
+
+                if ((step + 1) % FLAGS.summary_freq) == 0:
+                    fetches["summary"] = sv.summary_op
+
+                results = sess.run(fetches)
+
+                if ((step + 1) % FLAGS.summary_freq) == 0:
+                    print('Recording summary!!')
+                    sv.summary_writer.add_summary(results['summary'], results['global_step'])
+
+                if ((step + 1) % FLAGS.display_freq) == 0:
+                    train_epoch = math.ceil(results["global_step"] / data.steps_per_epoch)
+                    train_step = (results["global_step"] - 1) % data.steps_per_epoch + 1
+                    rate = (step + 1) * FLAGS.batch_size / (time.time() - start)
+                    remaining = (max_iter - step) * FLAGS.batch_size / rate
+                    print("progress  epoch %d  step %d  image/sec %0.1f  remaining %dm" % (
+                    train_epoch, train_step, rate, remaining / 60))
+                    if FLAGS.task == 'SRGAN':
+                        print("global_step", results["global_step"])
+                        #print("PSNR", results["PSNR"])
+                        print("discrim_loss", results["discrim_loss"])
+                        print("adversarial_loss", results["adversarial_loss"])
+                        print("content_loss", results["content_loss"])
+                        print("learning_rate", results['learning_rate'])
+
+                if ((step + 1) % FLAGS.save_freq) == 0:
+                    print('Save the checkpoint')
+                    saver.save(sess, os.path.join(FLAGS.output_dir, 'model'), global_step=sv.global_step)
+
+            print('Optimization done!!!!!!!!!!!!')
+
+    elif (FLAGS.mode == 'inference'):  # test
+        print('Test.....')
 
 if __name__ == '__main__':
     tf.app.run()
