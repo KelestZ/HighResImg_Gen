@@ -187,17 +187,18 @@ def SRGAN(inputs, targets, FLAGS):
     # Define the learning rate and global step
     with tf.variable_scope('get_learning_rate_and_global_step'):
         # global_step = tf.train.get_or_create_global_step()
+
         global_step = tf.Variable(
             initial_value=0,
             name="global_step",
             trainable=False,
             collections=[tf.GraphKeys.GLOBAL_STEP, tf.GraphKeys.GLOBAL_VARIABLES])
 
-
         learning_rate = tf.train.exponential_decay(FLAGS.learning_rate, global_step, FLAGS.decay_step, FLAGS.decay_rate, staircase=FLAGS.stair)
         incr_global_step = tf.assign(global_step, global_step + 1)
 
     with tf.variable_scope('dicriminator_train'):
+
         discrim_tvars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='discriminator')
         discrim_optimizer = tf.train.AdamOptimizer(learning_rate, beta1=FLAGS.beta)
         discrim_grads_and_vars = discrim_optimizer.compute_gradients(discrim_loss, discrim_tvars)

@@ -33,7 +33,7 @@ flags.DEFINE_string("inference_dir", "./inferences/", "inference_dir")
 # The system parameter
 flags.DEFINE_string("checkpoint_dir", "./checkpoints/", "checkpoint_dir")
 flags.DEFINE_string("generation_dir", "./generations/", "generations_dir")
-flags.DEFINE_string('summary_dir', None, 'The dirctory to output the summary')
+flags.DEFINE_string('summary_dir', "./summarys/", 'The dirctory to output the summary')
 flags.DEFINE_string('mode', 'train', 'The mode of the model train, test.')
 flags.DEFINE_boolean('pre_trained_model', False, 'pretrain')
 flags.DEFINE_string('pre_trained_model_type', 'SRGAN', 'The type of pretrained model (SRGAN or SRResnet)')
@@ -66,7 +66,7 @@ flags.DEFINE_float('beta', 0.9, 'The beta1 parameter for the Adam optimizer')
 flags.DEFINE_integer('max_epoch', None, 'The max epoch for the training')
 flags.DEFINE_integer('max_iter', 1000000, 'The max iteration of the training')
 flags.DEFINE_integer('display_freq', 20, 'The diplay frequency of the training process')
-flags.DEFINE_integer('summary_freq', 100, 'The frequency of writing summary')
+flags.DEFINE_integer('summary_freq', 30, 'The frequency of writing summary')
 flags.DEFINE_integer('save_freq', 10000, 'The frequency of saving images')
 
 FLAGS = flags.FLAGS
@@ -296,9 +296,7 @@ def main(_):
 
                 if ((step + 1) % FLAGS.summary_freq) == 0:
                     fetches["summary"] = sv.summary_op
-
                 results = sess.run(fetches)
-
                 if ((step + 1) % FLAGS.summary_freq) == 0:
                     print('Recording summary!!')
                     sv.summary_writer.add_summary(results['summary'], results['global_step'])
@@ -320,7 +318,7 @@ def main(_):
 
                 if ((step + 1) % FLAGS.save_freq) == 0:
                     print('Save the checkpoint')
-                    saver.save(sess, os.path.join(FLAGS.output_dir, 'model'), global_step=sv.global_step)
+                    saver.save(sess, os.path.join(FLAGS.checkpoint_dir, 'model'), global_step=sv.global_step)
 
             print('Optimization done!!!!!!!!!!!!')
 
