@@ -6,9 +6,12 @@ from tensorflow.contrib.data import Dataset
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework.ops import convert_to_tensor
 from lib.ops import random_flip
+import scipy.misc as sic
+import cv2
 
 IMAGENET_MEAN = tf.constant([123.68, 116.779, 103.939], dtype=tf.float32)
 # Define the dataloader
+
 def data_loader(FLAGS):
     with tf.device('/cpu:0'):
         # Define the returned data batches
@@ -50,9 +53,76 @@ def data_loader(FLAGS):
         steps_per_epoch=steps_per_epoch)
 
 
+def inference_data_loader(FLAGS):
+    with tf.device('/cpu:0'):
+        # Define the returned data batches
+        Data = collections.namedtuple('Data', ' inputs, size, paths_LR')
+        test_data = Inference_DataGenerator(FLAGS.train_file,
+                                     train_data_dic='test_images_64x64/',
+                                     img_size=[FLAGS.DATA_HEIGHT, FLAGS.DATA_WIDTH],
+                                     shuffle=False,
+                                     FLAGS=FLAGS)
+
+    return Data(
+        inputs=test_data.input_images,
+        size=test_data.data_size,
+        paths_LR=test_data.img_paths)
+
+
+
+class Inference_DataGenerator(object):
+    def __init__(self, file_path='/home/nfs/zpy/xrays/HighResImg_Gen/xray_images/', train_data_dic='train_images_64x64/',
+                 shuffle=False, img_size=[64, 64], buffer_size=1000, FLAGS=None):
+        '''
+
+            Args:
+            txt_file: Path to the text file.
+            mode: Either 'train' or 'test'. Depending on this value,
+                different parsing functions will be used.
+            batch_size: Number of images per batch.
+            num_classes: Number of classes in the dataset.
+            shuffle: Wether or not to shuffle the data in the dataset and the
+                initial file list.
+            buffer_size: Number of images used as buffer for TensorFlows
+                shuffling of the dataset.
+            Raises:
+                ValueError: If an invalid mode is passed.
+        '''
+
+        self.file_path = file_path
+        self.train_data_dic = train_data_dic
+
+        # retrieve the data from the dictionary
+        self._load_data()
+
+        # number of samples in the dataset
+        self.img_size = img_size  # (64, 64)
+        self.data_size = len(self.img_paths)
+
+        # Read in and preprocess the images
+        input_image_LR = [self._preprocess_test(_) for _ in self.img_paths]
+        self.input_images = input_image_LR
+
+
+    def _preprocess_test(self, name):
+        img = cv2.imread(name, 0).astype(np.float32)
+        img = np.expand_dims(img, -1)
+        img=img/255.0
+        return img
+
+    def _load_data(self):
+        """Read the content of the text file and store it into lists."""
+        self.img_paths = []
+        path = self.file_path+self.train_data_dic
+        print('path', path)
+        for i in os.listdir(path):
+            self.img_paths.append(self.file_path + self.train_data_dic + i)
+            self.img_paths.append(self.file_path + self.train_data_dic + i)
+
+
 class ImageDataGenerator(object):
     def __init__(self, file_path='/home/nfs/zpy/xrays/HighResImg_Gen/xray_images/', train_data_dic='train_images_64x64/',
-                 train_label_dic='train_images_128x128/',batch_size =32,
+                 train_label_dic='train_images_128x128/',batch_size =32, mode='train',
                  shuffle=True, img_size=[64, 64],label_size=[128, 128], buffer_size=1000,FLAGS=None):
         '''
 
@@ -73,7 +143,6 @@ class ImageDataGenerator(object):
         self.file_path = file_path
         self.train_data_dic = train_data_dic
         self.train_label_dic = train_label_dic
-        # self.num_classes = num_classes
 
         # retrieve the data from the dictionary
         self._load_data()
