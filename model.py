@@ -31,12 +31,12 @@ flags.DEFINE_string("inference_dir", "./inferences/", "inference_dir")
 
 
 # The system parameter
-
-flags.DEFINE_string("checkpoint", "/home/nfs/zpy/xrays/HighResImg_Gen/checkpoints2/model-70000", "checkpoint")
-flags.DEFINE_string("checkpoint_dir", "./checkpoints3/", "checkpoint_dir")
-flags.DEFINE_string("generation_dir", "./generations3/", "generations_dir")
-flags.DEFINE_string('summary_dir', "./summarys3/", 'The dirctory to output the summary')
-flags.DEFINE_string('mode', 'train', 'The mode of the model train, test.')
+#model-70000
+flags.DEFINE_string("checkpoint", None,'1')#"/home/nfs/zpy/xrays/HighResImg_Gen/checkpoints2/", "checkpoint")
+flags.DEFINE_string("checkpoint_dir", "/home/nfs/zpy/xrays/checkpoints_1216/", "checkpoint_dir")
+flags.DEFINE_string("generation_dir", "/home/nfs/zpy/xrays/generations_1216/", "generations_dir")
+flags.DEFINE_string('summary_dir', "/home/nfs/zpy/xrays/summarys_1216/", 'The dirctory to output the summary')
+flags.DEFINE_string('mode', 'inference', 'The mode of the model train, test.')
 flags.DEFINE_boolean('pre_trained_model', False, 'pretrain')
 flags.DEFINE_string('pre_trained_model_type', 'SRGAN', 'The type of pretrained model (SRGAN or SRResnet)')
 flags.DEFINE_boolean('is_training', True, 'Training => True, Testing => False')
@@ -301,7 +301,6 @@ def main(_):
 
         # Declare the test data reader
         inference_data = inference_data_loader(FLAGS)
-
         inputs_raw = tf.placeholder(tf.float32, shape=[1, None, None, 1], name='inputs_raw')
         path_LR = tf.placeholder(tf.string, shape=[], name='path_LR')
 
@@ -340,12 +339,12 @@ def main(_):
             for i in range(max_iter):
                 input_im = np.array([inference_data.inputs[i]]).astype(np.float32)
                 path_lr = inference_data.paths_LR[i]
-                gen_output, results = sess.run([converted_outputs, save_fetch], feed_dict={inputs_raw: input_im, path_LR: path_lr})
+                gen, results = sess.run([converted_outputs, save_fetch], feed_dict={inputs_raw: input_im, path_LR: path_lr})
                 # print('img', gen_output.shape, gen_output[0,0,0], type(gen_output[0,0,0]))
 
-                filesets = save_images(results, gen_output, FLAGS)
-                #for i, f in enumerate(filesets):
-                #    print('evaluate image', f['name'])
+                filesets = save_images(results, gen, FLAGS)
+                for i, f in enumerate(filesets):
+                    print('evaluate image', f['name'])
 
     elif (FLAGS.mode == 'train'):
         data = data_loader(FLAGS)
@@ -358,6 +357,28 @@ def main(_):
             raise NotImplementedError('Unknown task type')
 
         print('Finish building the network!!!')
+
+        # Convert the images output from the network
+        with tf.name_scope('convert_image'):
+            # Deprocess the images outputed from the model
+            inputs = deprocessLR(data.inputs)
+            targets = deprocess(data.targets)
+            outputs = deprocess(Net.gen_output)
+
+            # Convert back to uint8
+            converted_inputs = tf.image.convert_image_dtype(inputs, dtype=tf.uint8, saturate=True)
+            converted_targets = tf.image.convert_image_dtype(targets, dtype=tf.uint8, saturate=True)
+            converted_outputs = tf.image.convert_image_dtype(outputs, dtype=tf.uint8, saturate=True)
+
+        # Add image summaries
+        with tf.name_scope('inputs_summary'):
+            tf.summary.image('input_summary', converted_inputs)
+
+        with tf.name_scope('targets_summary'):
+            tf.summary.image('target_summary', converted_targets)
+
+        with tf.name_scope('outputs_summary'):
+            tf.summary.image('outputs_summary', converted_outputs)
 
         # Define the saver and weight initiallizer
         saver = tf.train.Saver(max_to_keep=10)
@@ -379,6 +400,9 @@ def main(_):
         if not FLAGS.perceptual_mode == 'MSE':
             vgg_var_list = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='vgg_19')
             vgg_restore = tf.train.Saver(vgg_var_list)
+
+        # seem I did not write this sentence
+        weight_initiallizer = tf.train.Saver(var_list2)
 
         run_config = tf.ConfigProto()
         run_config.gpu_options.allow_growth = True
@@ -438,6 +462,10 @@ def main(_):
                         #fetches["PSNR"] = psnr
                         fetches["learning_rate"] = Net.learning_rate
                         fetches["global_step"] = Net.global_step
+                        fetches["outputs"] = Net.gen_output
+                        fetches["targets"] = data.targets
+                        fetches["inputs"] = data.inputs
+
 
                 if ((step + 1) % FLAGS.summary_freq) == 0:
                     fetches["summary"] = sv.summary_op
@@ -460,6 +488,12 @@ def main(_):
                         print("adversarial_loss", results["adversarial_loss"])
                         print("content_loss", results["content_loss"])
                         print("learning_rate", results['learning_rate'])
+
+                        print('targets:', np.max(results['targets']), np.min(results['targets']))
+                        print('outputs:',  np.max(results['outputs']),np.min(results['outputs']))
+                        print('inputs:', np.max(results['inputs']),np.min(results['inputs']))
+
+
 
                 if ((step + 1) % FLAGS.save_freq) == 0:
                     print('Save the checkpoint')

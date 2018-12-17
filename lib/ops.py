@@ -58,6 +58,28 @@ def ConvLayer(self, name, input, n_out, filter_size=[3, 3], stride=2):
 
 '''
 
+def preprocess(image):
+	with tf.name_scope("preprocess"):
+		# [0, 1] => [-1, 1]
+		return image * 2 - 1
+
+
+def deprocess(image):
+	with tf.name_scope("deprocess"):
+		# [-1, 1] => [0, 1]
+		return (image + 1) / 2
+
+
+def preprocessLR(image):
+	with tf.name_scope("preprocessLR"):
+		return tf.identity(image)
+
+
+def deprocessLR(image):
+	with tf.name_scope("deprocessLR"):
+		return tf.identity(image)
+
+
 def lrelu(inputs, alpha):
 	return tf.keras.layers.LeakyReLU(alpha=alpha).call(inputs)
 

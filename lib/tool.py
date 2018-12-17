@@ -19,16 +19,13 @@ def generator(gen_inputs, gen_output_channels, reuse=False, FLAGS=None):
             net = conv2(net, 3, output_channel, stride, use_bias=False, scope='conv_2')
             net = batchnorm(net, FLAGS.is_training)
             net = net + inputs
-
         return net
-
 
     with tf.variable_scope('generator_unit', reuse=reuse):
         # The input layer
         with tf.variable_scope('input_stage'):
             net = conv2(gen_inputs, 9, 64, 1, scope='conv')
             net = prelu_tf(net)
-
         stage1_output = net
 
         # The residual block parts
@@ -228,3 +225,41 @@ def SRGAN(inputs, targets, FLAGS):
         global_step = global_step,
         learning_rate = learning_rate
     )
+
+import cv2
+
+def save_images(fetches, gen_outputs, FLAGS, step=None):
+    image_dir = os.path.join(FLAGS.generation_dir, "images")
+    if not os.path.exists(image_dir):
+        os.makedirs(image_dir)
+
+    filesets = []
+    in_path = fetches['path_LR']
+    name, _ = os.path.splitext(os.path.basename(str(in_path)))
+    fileset = {"name": name, "step": step}
+
+    if FLAGS.mode == 'inference':
+        kind = "outputs"
+        filename = name + ".png"
+        if step is not None:
+            filename = "%08d-%s" % (step, filename)
+        fileset[kind] = filename
+        out_path = os.path.join(image_dir, filename)
+        # contents = fetches[kind][0]
+        cv2.imwrite(out_path, gen_outputs.reshape([FLAGS.LABEL_HEIGHT, FLAGS.LABEL_WIDTH]))
+        #with open(out_path, "wb") as f:
+        #    f.write(contents)
+        filesets.append(fileset)
+
+    else:
+        for kind in ["inputs", "outputs", "targets"]:
+            filename = name + "-" + kind + ".png"
+            if step is not None:
+                filename = "%08d-%s" % (step, filename)
+            fileset[kind] = filename
+            out_path = os.path.join(image_dir, filename)
+            contents = fetches[kind][0]
+            with open(out_path, "wb") as f:
+                f.write(contents)
+        filesets.append(fileset)
+    return filesets
