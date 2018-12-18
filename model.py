@@ -32,10 +32,11 @@ flags.DEFINE_string("inference_dir", "./inferences/", "inference_dir")
 
 # The system parameter
 #model-70000
-flags.DEFINE_string("checkpoint", None,'1')#"/home/nfs/zpy/xrays/HighResImg_Gen/checkpoints2/", "checkpoint")
-flags.DEFINE_string("checkpoint_dir", "/home/nfs/zpy/xrays/checkpoints_1216/", "checkpoint_dir")
-flags.DEFINE_string("generation_dir", "/home/nfs/zpy/xrays/generations_1216/", "generations_dir")
-flags.DEFINE_string('summary_dir', "/home/nfs/zpy/xrays/summarys_1216/", 'The dirctory to output the summary')
+
+flags.DEFINE_string("checkpoint", None, '1')#"/home/nfs/zpy/xrays/HighResImg_Gen/checkpoints2/", "checkpoint")
+flags.DEFINE_string("checkpoint_dir", "/home/nfs/zpy/xrays/checkpoints_1218_mr_2notnorm/", "checkpoint_dir")
+flags.DEFINE_string("generation_dir", "/home/nfs/zpy/xrays/generations_1218_mr_2notnorm/", "generations_dir")
+flags.DEFINE_string('summary_dir', "/home/nfs/zpy/xrays/summarys_1218_mr_2notnorm/", 'The dirctory to output the summary')
 flags.DEFINE_string('mode', 'inference', 'The mode of the model train, test.')
 flags.DEFINE_boolean('pre_trained_model', False, 'pretrain')
 flags.DEFINE_string('pre_trained_model_type', 'SRGAN', 'The type of pretrained model (SRGAN or SRResnet)')
@@ -45,7 +46,7 @@ flags.DEFINE_string('task', 'SRGAN', 'The task: SRGAN, SRResnet')
 
 # The data preparing operation
 flags.DEFINE_integer("batch_size", "32", "BATCH_SIZE")
-flags.DEFINE_boolean('flip', True, 'Whether random flip data augmentation is applied')
+flags.DEFINE_boolean('flip', False, 'Whether random flip data augmentation is applied')
 flags.DEFINE_string("train_file", '/home/nfs/zpy/xray_images/', "data path")
 
 flags.DEFINE_integer('name_queue_capacity', 2048, 'The capacity of the filename queue (suggest large to ensure enough random shuffle.')
@@ -67,9 +68,9 @@ flags.DEFINE_boolean('stair', False, 'Whether perform staircase decay. True => d
 flags.DEFINE_float('beta', 0.9, 'The beta1 parameter for the Adam optimizer')
 flags.DEFINE_integer('max_epoch', None, 'The max epoch for the training')
 flags.DEFINE_integer('max_iter', 1000000, 'The max iteration of the training')
-flags.DEFINE_integer('display_freq', 20, 'The diplay frequency of the training process')
-flags.DEFINE_integer('summary_freq', 30, 'The frequency of writing summary')
-flags.DEFINE_integer('save_freq', 10000, 'The frequency of saving images')
+flags.DEFINE_integer('display_freq', 50, 'The diplay frequency of the training process')
+flags.DEFINE_integer('summary_freq', 500, 'The frequency of writing summary')
+flags.DEFINE_integer('save_freq', 3000, 'The frequency of saving images')
 
 FLAGS = flags.FLAGS
 os.environ["CUDA_VISIBLE_DEVICES"] = FLAGS.gpu
@@ -312,8 +313,13 @@ def main(_):
         print('Finish building the network')
 
         with tf.name_scope('convert_image'):
+            # Deprocess the images outputed from the model
+            inputs = deprocessLR(inputs_raw)
+            #outputs = deprocess(gen_output) # 0-1
+            #########
+
             # Convert back to uint8
-            converted_inputs = tf.image.convert_image_dtype(inputs_raw, dtype=tf.uint8, saturate=True)
+            converted_inputs = tf.image.convert_image_dtype(inputs, dtype=tf.uint8, saturate=True)
             converted_outputs = tf.image.convert_image_dtype(gen_output, dtype=tf.uint8, saturate=True)
 
         with tf.name_scope('encode_image'):
@@ -339,8 +345,7 @@ def main(_):
             for i in range(max_iter):
                 input_im = np.array([inference_data.inputs[i]]).astype(np.float32)
                 path_lr = inference_data.paths_LR[i]
-                gen, results = sess.run([converted_outputs, save_fetch], feed_dict={inputs_raw: input_im, path_LR: path_lr})
-                # print('img', gen_output.shape, gen_output[0,0,0], type(gen_output[0,0,0]))
+                gen, results = sess.run([gen_output, save_fetch], feed_dict={inputs_raw: input_im, path_LR: path_lr})
 
                 filesets = save_images(results, gen, FLAGS)
                 for i, f in enumerate(filesets):
@@ -402,21 +407,13 @@ def main(_):
             vgg_restore = tf.train.Saver(vgg_var_list)
 
         # seem I did not write this sentence
-        weight_initiallizer = tf.train.Saver(var_list2)
+        # weight_initiallizer = tf.train.Saver(var_list2)
 
         run_config = tf.ConfigProto()
         run_config.gpu_options.allow_growth = True
         # Use superviser to coordinate all queue and summary writer
         sv = tf.train.Supervisor(logdir=FLAGS.summary_dir, save_summaries_secs=0, saver=None)
         with sv.managed_session(config=run_config) as sess:
-            '''
-            model = Model(sess=sess,
-                          checkpoint_dir=None,
-                          cost_dir=None)
-
-            # if(FLAGS.train =='True'):
-            # model.train()
-            '''
 
             if (FLAGS.checkpoint is not None) and (FLAGS.pre_trained_model is False):
                 print('Loading model from the checkpoint...')
@@ -492,8 +489,6 @@ def main(_):
                         print('targets:', np.max(results['targets']), np.min(results['targets']))
                         print('outputs:',  np.max(results['outputs']),np.min(results['outputs']))
                         print('inputs:', np.max(results['inputs']),np.min(results['inputs']))
-
-
 
                 if ((step + 1) % FLAGS.save_freq) == 0:
                     print('Save the checkpoint')

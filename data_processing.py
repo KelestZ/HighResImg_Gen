@@ -71,7 +71,7 @@ def inference_data_loader(FLAGS):
 
 
 class Inference_DataGenerator(object):
-    def __init__(self, file_path='/home/nfs/zpy/xrays/HighResImg_Gen/xray_images/', train_data_dic='train_images_64x64/',
+    def __init__(self, file_path='/home/nfs/zpy/xrays/HighResImg_Gen/xray_images/', train_data_dic='test_images_64x64/',
                  shuffle=False, img_size=[64, 64], buffer_size=1000, FLAGS=None):
         '''
 
@@ -168,25 +168,26 @@ class ImageDataGenerator(object):
         image_LR = tf.read_file(output[0])
         image_HR = tf.read_file(output[1])
 
-        input_image_LR = tf.image.decode_png(image_LR, channels=3)#, channels=0)
-        input_image_HR = tf.image.decode_png(image_HR, channels=3)#, channels=0)
+        input_image_LR = tf.image.decode_png(image_LR, channels=0)
+        input_image_HR = tf.image.decode_png(image_HR, channels=0)
 
         input_image_LR = tf.expand_dims(input_image_LR[:,:,0],-1)
         input_image_HR = tf.expand_dims(input_image_HR[:,:,0],-1)
+        input_image_LR = tf.cast(input_image_LR, tf.float32)
+        input_image_HR = tf.cast(input_image_HR, tf.float32)
+        #input_image_LR = tf.image.convert_image_dtype(input_image_LR, dtype=tf.float32)
+        #input_image_HR = tf.image.convert_image_dtype(input_image_HR, dtype=tf.float32)
+        #input_image_LR = tf.cast(input_image_LR, tf.float32)
+        #input_image_HR=tf.cast(input_image_HR,tf.float32)
 
-        # input_image_LR = tf.cast(input_image_LR, tf.float32)
-        # input_image_HR = tf.cast(input_image_HR, tf.float32)
-        input_image_LR = tf.image.convert_image_dtype(input_image_LR, dtype=tf.float32)
-        input_image_HR = tf.image.convert_image_dtype(input_image_HR, dtype=tf.float32)
-
-        input_image_LR = tf.identity(input_image_LR)
-        input_image_HR = tf.identity(input_image_HR)
+        #input_image_LR = tf.identity(input_image_LR)
+        #input_image_HR = tf.identity(input_image_HR)
 
         # Normalize the low resolution image to [0, 1], high resolution to [-1, 1]
-        a_image = preprocessLR(input_image_LR)
-        b_image = preprocess(input_image_HR)  # label:[-1,1]
+        #a_image = preprocessLR(input_image_LR)
+        #b_image = preprocess(input_image_HR)  # label:[-1,1]
 
-        inputs, targets = [a_image, b_image] #[input_image_LR, input_image_HR]#
+        inputs, targets = [input_image_LR, input_image_HR] # [a_image, b_image]  #
 
         with tf.name_scope('data_preprocessing'):
             with tf.variable_scope('random_flip'):

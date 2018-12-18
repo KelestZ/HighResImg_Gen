@@ -51,7 +51,7 @@ def generator(gen_inputs, gen_output_channels, reuse=False, FLAGS=None):
         '''
         with tf.variable_scope('output_stage'):
             net = conv2(net, 9, gen_output_channels, 1, scope='conv')
-
+    # net = tf.nn.sigmoid(net)
     return net
 
 
@@ -157,6 +157,7 @@ def SRGAN(inputs, targets, FLAGS):
     else:
         raise NotImplementedError('Unknown perceptual type!!')
 
+
     # Calculating the generator loss
     with tf.variable_scope('generator_loss'):
         # Content loss
@@ -174,6 +175,7 @@ def SRGAN(inputs, targets, FLAGS):
         gen_loss = content_loss + (FLAGS.ratio)*adversarial_loss
         print('adversarial_loss.get_shape()', adversarial_loss.get_shape())
         print('content_loss.get_shape()', content_loss.get_shape())
+
 
     # Calculating the discriminator loss
     with tf.variable_scope('discriminator_loss'):
@@ -245,10 +247,13 @@ def save_images(fetches, gen_outputs, FLAGS, step=None):
             filename = "%08d-%s" % (step, filename)
         fileset[kind] = filename
         out_path = os.path.join(image_dir, filename)
-        # contents = fetches[kind][0]
-        cv2.imwrite(out_path, gen_outputs.reshape([FLAGS.LABEL_HEIGHT, FLAGS.LABEL_WIDTH]))
-        #with open(out_path, "wb") as f:
-        #    f.write(contents)
+        contents = fetches[kind][0]
+        # print(gen_outputs)
+
+        #temp = np.clip(gen_outputs*255.0,0,255).astype(np.int32)
+        #cv2.imwrite(out_path, temp.reshape([FLAGS.LABEL_HEIGHT, FLAGS.LABEL_WIDTH]))
+        with open(out_path, "wb") as f:
+             f.write(contents)
         filesets.append(fileset)
 
     else:
